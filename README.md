@@ -16,8 +16,6 @@
 - ⚡ **优先级抢占**：高优任务的抢占机制和故障恢复
 - 🎨 **Label 级别抢占**：支持基于任意 label 的细粒度抢占策略
 - 📊 **实时监控**：异步 metrics 汇聚与全局优化
-- 🔌 **可插拔架构**：支持自定义调度策略和分片策略
-- 🌐 **多维度分片**：支持 pipeline parallel、tensor parallel、sequence parallel
 
 ## 🚀 快速开始
 
@@ -27,10 +25,7 @@
 # 基础安装
 pip install schedulemesh-core
 
-# 完整安装（包含所有功能）
-pip install schedulemesh[full]
-
-# 开发安装
+# 开发安装（从源码安装）
 pip install -e .[dev]
 ```
 
@@ -54,6 +49,12 @@ simple.configure_preemption(
     enable_label_preemption=True,
     label_preemption_rules={"stage": {"demo": ["batch"]}},
 )
+# 定义一个示例 Actor
+@ray.remote
+class MyDemoActor:
+    def process(self, payload):
+        return f"Processed: {payload}"
+
 simple.submit(
     task_id="job-demo-1",
     pool="demo-pool",
@@ -82,36 +83,37 @@ head.start()
 # 创建调度门面
 scheduler = RayScheduler(name="demo-mesh")
 
-# 预留一个资源池：总共 4 vCPU、4096 MB 内存、2 个自定义 accelerator 资源
+# 预留一个资源池：总共 2 vCPU、2048 MB 内存
 pool = scheduler.create_pool(
     name="demo-pool",
     labels={"stage": "demo"},
-    resources={"cpu": 2.0, "memory": 2048.0, "gpu": 0.0, "custom": {"accelerator": 1.0}},
+    resources={"cpu": 2.0, "memory": 2048.0, "gpu": 0.0},
     target_agents=2,
 )
 
 # 创建默认规格的 Agent（使用池默认配置）
-agent_a = scheduler.create_agent(
+agent_a_result = scheduler.create_agent(
     name="agent-a",
     pool="demo-pool",
     actor_class=AgentActor,
 )
 
 # 创建定制规格的 Agent：0.5 CPU / 512 MB，并传入 Ray actor 参数
-agent_b = scheduler.create_agent(
+agent_b_result = scheduler.create_agent(
     name="agent-b",
     pool="demo-pool",
     actor_class=AgentActor,
-    resources={"cpu": 0.5, "memory": 512.0, "gpu": 0.0, "custom": {"accelerator": 0.25}},
+    resources={"cpu": 0.5, "memory": 512.0, "gpu": 0.0},
     ray_options={"max_restarts": 1, "runtime_env": {"env_vars": {"MODE": "test"}}},
 )
 
-# 列出资源池中的 agent
-agents = scheduler.list_agents("demo-pool")  # => {"agents": [...]} 包含资源、Ray options 等信息
+# 列出资源池中的 agent（需要 include_handle=True 才能获取 actor 句柄）
+agents = scheduler.list_agents("demo-pool", include_handle=True)  # => {"success": True, "agents": [...]}
 
 # 使用 Agent 句柄执行逻辑
-handle = agent_a["agent"]["handle"]
-print(ray.get(handle.invoke.remote("process", payload="hello")))
+if agents["success"] and agents["agents"]:
+    agent_a_handle = agents["agents"][0]["handle"]
+    print(ray.get(agent_a_handle.invoke.remote("process", payload="hello")))
 
 # 删除 Agent 并自动归还资源
 scheduler.delete_agent("agent-b")
@@ -148,6 +150,12 @@ client.list_agents()
   终止 Ray actor 并归还资源配额；`force=True` 时忽略 Ray Kill 的异常。
 - `delete_agent` / `create_agent` 均会在失败时自动回滚资源预留，确保资源账本与 Ray 状态一致。
 
+## 📚 文档
+
+- [设计文档](docs/scheduleMesh_design.md)
+- [抢占功能指南](docs/preemption_guide.md)
+- [自动化抢占指南](docs/automated_preemption_guide.md)
+- [Agent 配置指南](docs/agent_configuration_guide.md)
 
 ## 🏗️ 架构设计
 
@@ -179,9 +187,9 @@ ScheduleMesh Manager (全局调度中心)
 - **Supervisor Actor**：协调器，统一管理所有控制组件（Resource Pool Manager、PG Pool Manager、Agent Manager、Scheduler、Preemption Controller 等）。
 - **Resource Pool Manager**：资源池管理器，负责按 pool 维度记录容量、已用配额与目标 Agent 数量，管理虚拟资源配额，替代早期的「Broker」概念。
 - **PlacementGroup Pool Manager**：PG 池化管理器，管理物理资源分配（PG 创建、分配、复用），支持高优 PG 预留与动态 PG 管理，实现高优作业快速启动。
+- **Scheduler**：多策略调度器，支持 least_busy、round_robin、random、power_of_two 等策略，并消费来自 Agent 的实时指标。
 - **PreemptionController**：优先级抢占控制器，结合 label / 数值阈值做细粒度抢占决策，与 PG Pool 配合实现快速抢占。
 - **Agent Manager & Agent Actor**：Agent 管理器维护 Ray actor 生命周期，协调 Resource Pool 和 PG Pool 确保虚拟配额与物理资源一致；Agent Actor 负责执行任务并通过 `MetricsReportingAgent` 异步上报指标。
-- **Resource Registry**：统一资源注册表，封装集群资源快照与池内资源账本。
 
 ### 资源管理双层架构
 
@@ -191,52 +199,23 @@ ScheduleMesh 采用**虚拟配额 + 物理资源**的双层管理架构：
 - **PlacementGroup Pool Manager**：管理物理资源分配（PG 创建、分配、复用），保证资源隔离与快速启动。
 - **协作机制**：每个 Resource Pool 对应一个 PG Pool，Agent 创建时先预留虚拟配额，再从 PG Pool 分配物理 PG，确保虚拟配额与物理资源的一致性。
 
-## 🔌 插件系统
+## 🛡️ 高可用建议
 
-ScheduleMesh 支持可插拔的插件架构：
+- 使用 `RayScheduler(detached=True, state_path=...)` 让调度面在 Ray 集群中以 detached actor 形式长期存在。新的驱动程序可通过 `RayScheduler.attach(...)` 复用同一调度器。
+- `state_path` 会持久化资源池账本与调度队列，调度器重启后可自动恢复；通过 `scheduler.ensure_agent_health()` 可以检测心跳异常的 Agent 并进行重建。
+- 建议配合外部存储挂载（如持久卷）以及 Ray 的 head 节点容错配置，构建生产级 ScheduleMesh 控制面。
 
-### 调度策略插件
+```bash
+# 使用 Docker Compose 快速部署
+git clone https://git.kanzhun-inc.com/arsenal/ray-mind.git
+cd ray-mind
+docker-compose up -d
 
-```python
-from schedulemesh.plugins import SchedulingStrategyPlugin
-
-class CustomSchedulingPlugin(SchedulingStrategyPlugin):
-    def score(self, task, resources):
-        # 自定义资源打分逻辑
-        return custom_score
-    
-    def priority(self, task):
-        # 自定义优先级计算
-        return custom_priority
-    
-    def preemption_policy(self, high_priority_task, low_priority_task):
-        # 自定义抢占策略
-        return should_preempt
+# 访问服务
+# Ray Dashboard: http://localhost:8265
 ```
 
-### 分片策略插件
-
-```python
-from schedulemesh.plugins import DispatchStrategyPlugin
-
-class CustomDispatchPlugin(DispatchStrategyPlugin):
-    def python_dispatch_fn(self, data, workers_a, workers_b):
-        # 自定义 Python 数据分片
-        return custom_shards
-    
-    def torch_dispatch_fn(self, tensor, workers_a, workers_b):
-        # 自定义 PyTorch 张量分片
-        return custom_tensor_shards
-```
-
-## 📊 监控和 Metrics
-
-ScheduleMesh 提供完整的监控能力：
-
-- **实时 Metrics**：CPU、内存、GPU 使用率
-- **调度指标**：调度延迟、成功率、排队时间
-- **性能指标**：吞吐量、延迟、资源利用率
-- **告警系统**：基于阈值的自动告警
+### 开发环境设置
 
 ```bash
 # 克隆仓库
