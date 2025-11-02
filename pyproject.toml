@@ -1,0 +1,237 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "schedulemesh-core"
+dynamic = ["version"]
+description = "统一调度与资源管控平面 - ScheduleMesh"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Arsenal Team", email = "liugaosheng@kanzhun.com"},
+]
+maintainers = [
+    {name = "Arsenal Team", email = "liugaosheng@kanzhun.com"},
+]
+keywords = [
+    "distributed-computing",
+    "scheduling", 
+    "ray",
+    "machine-learning",
+    "deep-learning",
+    "gpu",
+    "cluster",
+    "resource-management",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "ray>=2.0.0",
+    "numpy>=1.19.0",
+    "torch>=1.9.0",
+    "pydantic>=1.8.0",
+    "pyyaml>=5.4.0",
+    "click>=8.0.0",
+    "rich>=10.0.0",
+    "psutil>=5.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0.0",
+    "pytest-cov>=2.12.0",
+    "pytest-mock>=3.6.0",
+    "black>=21.0.0",
+    "flake8>=3.9.0",
+    "mypy>=0.910",
+    "isort>=5.9.0",
+    "pre-commit>=2.15.0",
+    "sphinx>=4.0.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "jupyter>=1.0.0",
+    "ipykernel>=6.0.0",
+]
+full = [
+    "schedulemesh-core",
+    "schedulemesh-plugins",
+    "schedulemesh-examples",
+]
+gpu = [
+    "torch>=1.9.0",
+    "cupy-cuda11x",
+]
+monitoring = [
+    "prometheus-client>=0.12.0",
+    "opentelemetry-api>=1.0.0",
+    "opentelemetry-sdk>=1.0.0",
+    "opentelemetry-exporter-prometheus>=1.0.0",
+    "grafana-api>=1.0.0",
+]
+database = [
+    "sqlalchemy>=1.4.0",
+    "alembic>=1.7.0",
+    "psycopg2-binary>=2.9.0",
+]
+web = [
+    "fastapi>=0.68.0",
+    "uvicorn>=0.15.0",
+    "websockets>=9.0.0",
+    "jinja2>=3.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Arsenal-Team/ScheduleMesh"
+Documentation = "https://schedulemesh.readthedocs.io/"
+Repository = "https://github.com/Arsenal-Team/ScheduleMesh.git"
+"Bug Tracker" = "https://github.com/Arsenal-Team/ScheduleMesh/issues"
+Changelog = "https://github.com/Arsenal-Team/ScheduleMesh/blob/main/CHANGELOG.md"
+
+[project.scripts]
+schedulemesh = "schedulemesh.cli:main"
+schedulemesh-server = "schedulemesh.server:main"
+schedulemesh-dashboard = "schedulemesh.dashboard:main"
+
+[tool.setuptools]
+packages = ["schedulemesh"]
+
+[tool.setuptools.package-data]
+schedulemesh = [
+    "config/*.yaml",
+    "config/*.json", 
+    "templates/*.html",
+    "static/*.css",
+    "static/*.js",
+    "py.typed",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "schedulemesh.__version__"}
+
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["schedulemesh"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "ray.*",
+    "torch.*",
+    "numpy.*",
+    "pydantic.*",
+    "yaml.*",
+    "click.*",
+    "rich.*",
+    "psutil.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "gpu: marks tests that require GPU",
+    "ray: marks tests that require Ray",
+]
+
+[tool.coverage.run]
+source = ["schedulemesh"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/migrations/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.ruff]
+target-version = "py38"
+line-length = 88
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["B011"]
+
+

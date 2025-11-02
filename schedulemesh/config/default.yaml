@@ -1,0 +1,3 @@
+scheduling:
+  default_strategy: "least_busy"
+  strategies: []

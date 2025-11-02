@@ -1,0 +1,134 @@
+# ScheduleMesh Docker Compose 配置
+
+version: '3.8'
+
+services:
+  # ScheduleMesh 主服务
+  schedulemesh:
+    build: .
+    ports:
+      - "8000:8000"  # API 端口
+      - "8001:8001"  # Dashboard 端口
+      - "8002:8002"  # Metrics 端口
+    environment:
+      - RAY_ADDRESS=ray-head:10001
+      - SCHEDULEMESH_CONFIG=/app/config/production.yaml
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./data:/app/data
+    depends_on:
+      - ray-head
+      - redis
+      - prometheus
+    networks:
+      - schedulemesh-network
+
+  # Ray Head Node
+  ray-head:
+    image: rayproject/ray:2.0.0-py39
+    command: ray start --head --port=10001 --dashboard-host=0.0.0.0 --dashboard-port=8265
+    ports:
+      - "10001:10001"  # Ray 端口
+      - "8265:8265"   # Ray Dashboard
+    environment:
+      - RAY_DISABLE_IMPORT_WARNING=1
+    volumes:
+      - ./ray_logs:/tmp/ray
+    networks:
+      - schedulemesh-network
+
+  # Ray Worker Node 1
+  ray-worker-1:
+    image: rayproject/ray:2.0.0-py39
+    command: ray start --address=ray-head:10001
+    environment:
+      - RAY_DISABLE_IMPORT_WARNING=1
+    volumes:
+      - ./ray_logs:/tmp/ray
+    depends_on:
+      - ray-head
+    networks:
+      - schedulemesh-network
+
+  # Ray Worker Node 2
+  ray-worker-2:
+    image: rayproject/ray:2.0.0-py39
+    command: ray start --address=ray-head:10001
+    environment:
+      - RAY_DISABLE_IMPORT_WARNING=1
+    volumes:
+      - ./ray_logs:/tmp/ray
+    depends_on:
+      - ray-head
+    networks:
+      - schedulemesh-network
+
+  # Redis (用于状态存储)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - schedulemesh-network
+
+  # Prometheus (监控)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - schedulemesh-network
+
+  # Grafana (可视化)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - schedulemesh-network
+
+  # PostgreSQL (可选，用于持久化存储)
+  postgres:
+    image: postgres:14-alpine
+    environment:
+      - POSTGRES_DB=schedulemesh
+      - POSTGRES_USER=schedulemesh
+      - POSTGRES_PASSWORD=schedulemesh
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - schedulemesh-network
+
+volumes:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  postgres_data:
+
+networks:
+  schedulemesh-network:
+    driver: bridge
+
+
